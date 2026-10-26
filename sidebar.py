@@ -1,45 +1,38 @@
-"""Korvian: sidebar (เมนูการ์ด, เลื่อนเข้า-ออก, ปุ่มบัญชี) และโลโก้
+# FILE: sidebar.py | OWNER: #1 | VERSION: 1 | BASE: 0 | DATE: 2026-10-24
+# CHANGES: v1 แยกจากไฟล์ v0 (sidebar.py: render_menu+render_account -> render() คืน key หน้า; ปุ่มรีเซ็ตเรียก reset_user_data 3 ส่วน; ปุ่มออกเรียก auth.logout)
+"""Korvian: sidebar (เมนูการ์ด, เลื่อนเข้า-ออก, กล่องบัญชี, ปุ่มรีเซ็ต/ออกจากระบบ)
 
+จุดเชื่อม: render() คืน "summary" | "money" | "health" | "study"
 เพิ่มเมนูใหม่: เติมรายการใน MENU_ITEMS ที่นี่ + เติมใน PAGES ที่ app.py
 """
 import html
-import time
 
 import streamlit as st
 import streamlit.components.v1 as components
 
-import db
+import auth
+import finance_data
+import health_data
+import study_data
+import theme
 
 
-def korvian_logo_svg(size=28, color="#b8bac2"):
-    return (
-        f"<svg width='{size}' height='{size}' viewBox='0 0 28 28' "
-        "xmlns='http://www.w3.org/2000/svg'>"
-        f"<circle cx='14' cy='14' r='11' fill='none' stroke='{color}' stroke-width='0.9'/>"
-        f"<circle cx='14' cy='14' r='9.3' fill='none' stroke='{color}' stroke-width='0.9'/>"
-        f"<path fill='{color}' d='M14 6.8 C14 12.2 15.8 14 21.2 14 "
-        "C15.8 14 14 15.8 14 21.2 C14 15.8 12.2 14 6.8 14 "
-        "C12.2 14 14 12.2 14 6.8 Z'/>"
-        "</svg>"
-    )
-
-
-# ชื่อเมนู, คำอธิบายใต้ชื่อ, สีพื้นกล่องไอคอน, ไอคอน SVG (เข้ารหัสสำหรับใส่ใน CSS)
+# key หน้า, ชื่อเมนู, คำอธิบายใต้ชื่อ, สีพื้นกล่องไอคอน, ไอคอน SVG (เข้ารหัสสำหรับใส่ใน CSS)
 MENU_ITEMS = [
     (
-        "🎯สรุปผล", "ดูภาพรวมเป้าหมายของคุณ", "#cfe3ff",
+        "summary", "🎯สรุปผล", "ดูภาพรวมเป้าหมายของคุณ", "#cfe3ff",
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f6fd6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h16M7 20v-6M12 20V8M17 20v-9'/%3E%3C/svg%3E",
     ),
     (
-        "💰 Money Line", "วางแผนเงินเก็บของคุณ", "#fff0bf",
+        "money", "💰 Money Line", "วางแผนเงินเก็บของคุณ", "#fff0bf",
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d99a00' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='7' width='18' height='13' rx='3'/%3E%3Cpath d='M5 7l10-3v3'/%3E%3Crect x='14' y='11' width='7' height='5' rx='2.5'/%3E%3Cpath d='M17.5 13.5h.01'/%3E%3C/svg%3E",
     ),
     (
-        "💪 Health Line", "ติดตามการดูแลตัวเอง", "#d3f4e2",
+        "health", "💪 Health Line", "ติดตามการดูแลตัวเอง", "#d3f4e2",
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231f9d6b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20s-8-5-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 9c0 6-8 11-8 11z'/%3E%3C/svg%3E",
     ),
     (
-        "📚 Study Line", "เร็วๆ นี้", "#e6dcfb",
+        "study", "📚 Study Line", "เร็วๆ นี้", "#e6dcfb",
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c4dcc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 6c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2zM12 6v13'/%3E%3C/svg%3E",
     ),
 ]
@@ -227,7 +220,7 @@ def _menu_item_css():
     """สร้าง CSS ไอคอน + คำอธิบายของการ์ดแต่ละใบจาก MENU_ITEMS
     (เขียนสองรูปแบบ selector เพื่อรองรับโครงสร้างของ Streamlit ทั้งสองแบบ)"""
     rules = []
-    for i, (_name, desc, icon_bg, icon_svg) in enumerate(MENU_ITEMS, start=1):
+    for i, (_key, _name, desc, icon_bg, icon_svg) in enumerate(MENU_ITEMS, start=1):
         a = f'section[data-testid="stSidebar"] div[role="radiogroup"] > label:nth-child({i})'
         b = f'section[data-testid="stSidebar"] div[role="radiogroup"] > *:nth-child({i}) label'
         rules.append(
@@ -346,14 +339,14 @@ if (!doc.getElementById('gq-sidebar-script')) {
 # ส่วนที่ app.py เรียกใช้
 # ==========================================
 
-def render_menu():
-    """วาด sidebar (สไตล์ + แถบชื่อ + เมนู) แล้วคืนชื่อเมนูที่เลือก"""
+def render():
+    """วาด sidebar (สไตล์ + แถบชื่อ + เมนู + กล่องบัญชี) แล้วคืน key ของหน้าที่เลือก"""
     st.sidebar.markdown(_style_block(), unsafe_allow_html=True)
 
     st.sidebar.markdown(
         "<div class='gq-banner'>"
         "<div class='gq-row'>"
-        + korvian_logo_svg(28) +
+        + theme.logo_svg(28) +
         "<b>Korvian</b>"
         "</div>"
         "<span>Your Future Depends on What You Do Today.</span>"
@@ -365,14 +358,17 @@ def render_menu():
 
     menu = st.sidebar.radio(
         "เลือกหน้า",
-        [item[0] for item in MENU_ITEMS],
+        [item[1] for item in MENU_ITEMS],
         label_visibility="collapsed"
     )
     components.html(_JS, height=0)
-    return menu
+
+    _render_account()
+
+    return {item[1]: item[0] for item in MENU_ITEMS}[menu]
 
 
-def render_account(cookie_controller):
+def _render_account():
     """ส่วนล่างของ sidebar: บัญชีที่ล็อกอิน, รีเซ็ตข้อมูล, ออกจากระบบ"""
     st.sidebar.write("---")
 
@@ -386,9 +382,9 @@ def render_account(cookie_controller):
 
     # ----- รีเซ็ตข้อมูลทั้งหมด -----
     if st.sidebar.button("🧹 รีเซ็ตข้อมูลทั้งหมด", use_container_width=True):
-        st.session_state["confirm_reset_all"] = True
+        st.session_state["sb_confirm_reset_all"] = True
 
-    if st.session_state.get("confirm_reset_all", False):
+    if st.session_state.get("sb_confirm_reset_all", False):
         st.sidebar.warning(
             "ต้องการรีเซ็ตข้อมูลในบัญชีนี้หรือไม่? "
             "จะล้างเงินเก็บ เป้าหมาย ประวัติรายรับ-รายจ่ายทั้งหมด "
@@ -398,23 +394,15 @@ def render_account(cookie_controller):
         confirm_col, cancel_col = st.sidebar.columns(2)
 
         with confirm_col:
-            if st.button("ยืนยันรีเซ็ต", key="confirm_all_reset"):
+            if st.button("ยืนยันรีเซ็ต", key="sb_confirm_all_reset"):
                 try:
                     uid = st.session_state["user_id"]
 
-                    # ล้างประวัติก่อน (ถ้าพลาด จะยังไม่รีเซ็ตส่วนอื่น)
-                    db.clear_history(uid)
+                    finance_data.reset_user_data(uid)
+                    health_data.reset_user_data(uid)
+                    study_data.reset_user_data(uid)
 
-                    db.user_client().table("player_data").update({
-                        "balance": 0,
-                        "goal": "0",
-                        "item": "สิ่งที่อยากได้",
-                    }).eq("user_id", uid).execute()
-
-                    st.session_state.balance = 0.0
-                    st.session_state.goal = 0.0
-                    st.session_state.item_name = "สิ่งที่อยากได้"
-                    st.session_state["confirm_reset_all"] = False
+                    st.session_state["sb_confirm_reset_all"] = False
 
                     st.sidebar.success("รีเซ็ตข้อมูลสำเร็จ")
                     st.rerun()
@@ -423,23 +411,10 @@ def render_account(cookie_controller):
                     st.sidebar.error(f"รีเซ็ตไม่สำเร็จ: {e}")
 
         with cancel_col:
-            if st.button("ยกเลิก", key="cancel_all_reset"):
-                st.session_state["confirm_reset_all"] = False
+            if st.button("ยกเลิก", key="sb_cancel_all_reset"):
+                st.session_state["sb_confirm_reset_all"] = False
                 st.rerun()
 
     # ----- ออกจากระบบ -----
     if st.sidebar.button("🚪 ออกจากระบบ", use_container_width=True):
-        try:
-            cookie_token = cookie_controller.get(db.COOKIE_NAME)
-            if cookie_token:
-                db.delete_saved_session(cookie_token)
-
-            cookie_controller.remove(db.COOKIE_NAME)
-            db.user_client().auth.sign_out()
-        except Exception:
-            pass
-
-        # ล้างทุกอย่างใน session รวมถึงช่องติ๊กสุขภาพ กันข้อมูลคนก่อนค้างอยู่
-        db.clear_session_state()
-        time.sleep(1)
-        st.rerun()
+        auth.logout()
